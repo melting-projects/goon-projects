@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local Content Infinite Scroll</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #121212;
+            color: #e0e0e0;
+        }
+        #app {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        #folderButton {
+            display: block;
+            margin: 20px auto;
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #1da1f2;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #feed {
+            background-color: #1e1e1e;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .post {
+            padding: 15px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 200px;
+            max-height: 80vh;
+            overflow: hidden;
+            position: relative;
+        }
+        .post img, .post video {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            border-radius: 5px;
+        }
+        .post .text-content {
+            max-height: 100%;
+            overflow-y: auto;
+            word-wrap: break-word;
+        }
+        .loading-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            color: #fff;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 5px;
+        }
+        #loading {
+            text-align: center;
+            padding: 20px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <button id="folderButton">Select Folder</button>
+        <div id="feed"></div>
+        <div id="loading">Loading...</div>
+    </div>
+
+    <script>
+        let dirHandle;
+        let fileHandles = [];
+        const postsPerLoad = 5;
+        let isLoading = false;
+        let loadingContent = 0;
+
+        const folderButton = document.getElementById('folderButton');
+        const feed = document.getElementById('feed');
+        const loadingIndicator = document.getElementById('loading');
+
+        folderButton.addEventListener('click', async () => {
+            try {
+                dirHandle = await window.showDirectoryPicker();
+                feed.innerHTML = '';
+                fileHandles = [];
+                loadingIndicator.style.display = 'block';
+                await loadFileHandles(dirHandle);
+                shuffleArray(fileHandles);
+                loadingIndicator.style.display = 'none';
+                await loadPosts();
+            } catch (err) {
+                console.error('Error accessing folder, pick a new folder or check file permissions:', err);
+                loadingIndicator.style.display = 'none';
+            }
+        });
+
+        async function loadFileHandles(handle, path = '') {
+            for await (const entry of handle.values()) {
+                if (entry.kind === 'file') {
+                    fileHandles.push({ handle: entry, path: path + entry.name });
+                } else if (entry.kind === 'directory') {
+                    await loadFileHandles(entry, path + entry.name + '/');
+                }
+            }
+        }
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        async function loadPosts() {
+            if (isLoading || loadingContent > 0 || fileHandles.length === 0) return;
+            
+            isLoading = true;
+            loadingIndicator.style.display = 'block';
+
+            for (let i = 0; i < postsPerLoad && fileHandles.length > 0; i++) {
+                const fileHandle = fileHandles.pop();
+                const file = await fileHandle.handle.getFile();
+                const post = await createPostElement(file);
+                feed.appendChild(post);
+            }
+
+            isLoading = false;
+            loadingIndicator.style.display = 'none';
+            handleScroll(); // Check video visibility after loading new posts
+        }
+
+        async function createPostElement(file) {
+            const post = document.createElement('div');
+            post.className = 'post';
+
+            const loadingIndicator = document.createElement('div');
+            loadingIndicator.className = 'loading-indicator';
+            loadingIndicator.textContent = 'Loading...';
+            post.appendChild(loadingIndicator);
+
+            loadingContent++;
+
+            try {
+                if (file.type.startsWith('image/')) {
+                    await loadImage(file, post, loadingIndicator);
+                } else if (file.type.startsWith('video/')) {
+                    await loadVideo(file, post, loadingIndicator);
+                } else if (file.type === 'text/plain') {
+                    await loadText(file, post, loadingIndicator);
+                } else {
+                    throw new Error('Unsupported file type');
+                }
+            } catch (error) {
+                console.error('Error loading file:', error);
+                loadingIndicator.textContent = 'Error loading content';
+            }
+
+            loadingContent--;
+            checkAndLoadMore();
+            return post;
+        }
+
+        function loadImage(file, post, loadingIndicator) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.src = URL.createObjectURL(file);
+                img.onload = () => {
+                    URL.revokeObjectURL(img.src);
+                    post.appendChild(img);
+                    loadingIndicator.remove();
+                    resolve();
+                };
+                img.onerror = () => {
+                    reject(new Error('Failed to load image'));
+                };
+            });
+        }
+
+        function loadVideo(file, post, loadingIndicator) {
+            return new Promise((resolve, reject) => {
+                const video = document.createElement('video');
+                video.src = URL.createObjectURL(file);
+                video.muted = true;
+                video.loop = true;
+                video.controls = true;
+                video.preload = 'metadata';
+                video.onloadedmetadata = () => {
+                    post.appendChild(video);
+                    loadingIndicator.remove();
+                    resolve();
+                };
+                video.onerror = () => {
+                    reject(new Error('Failed to load video'));
+                };
+            });
+        }
+
+        async function loadText(file, post, loadingIndicator) {
+            const textContent = document.createElement('div');
+            textContent.className = 'text-content';
+            try {
+                const text = await file.text();
+                textContent.textContent = text;
+                post.appendChild(textContent);
+                loadingIndicator.remove();
+            } catch (error) {
+                throw new Error('Failed to load text content');
+            }
+        }
+
+        function checkAndLoadMore() {
+            if (loadingContent === 0 && 
+                (window.innerHeight + window.scrollY) >= document.body.offsetHeight - window.innerHeight) {
+                loadPosts();
+            }
+        }
+
+        function handleScroll() {
+            if (loadingContent > 0) return;
+
+            const posts = document.querySelectorAll('.post');
+            posts.forEach(post => {
+                const video = post.querySelector('video');
+                if (video) {
+                    const rect = post.getBoundingClientRect();
+                    const windowHeight = window.innerHeight || document.documentElement.clientHeight;
+                    const videoCenter = rect.top + rect.height / 2;
+
+                    if (videoCenter >= 0 && videoCenter <= windowHeight) {
+                        // Video is centered on the screen
+                        video.muted = false;
+                        if (video.paused) video.play();
+                    } else {
+                        // Video is not centered
+                        video.muted = true;
+                        if (!video.paused) video.pause();
+                    }
+                }
+            });
+
+            checkAndLoadMore();
+        }
+
+        window.addEventListener('scroll', handleScroll);
+        window.addEventListener('resize', handleScroll);
+    </script>
+</body>
+</html>
