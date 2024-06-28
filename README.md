@@ -1,4 +1,4 @@
-# goon-projects
+# ~~goon-projects~~ QoL Repo
 A place to host out ~~goon~~ content consumption QoL experiements.
 
 All projects here were created for personal use. Im not really a programmer, but I'll sometimes get ideas and like to flesh em out a little. 
