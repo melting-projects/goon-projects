@@ -3,39 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Local Content Infinite Scroll</title>
+    <title>Enhanced Local Content Viewer</title>
     <style>
+        :root {
+            --bg-color: #121212;
+            --text-color: #e0e0e0;
+            --feed-bg: #1e1e1e;
+            --border-color: #333;
+        }
         body {
             font-family: Arial, sans-serif;
             margin: 0;
-            padding: 20px;
-            background-color: #121212;
-            color: #e0e0e0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
+            min-height: 100vh;
         }
         #app {
-            max-width: 600px;
-            margin: 0 auto;
-        }
-        #folderButton {
-            display: block;
-            margin: 20px auto;
-            padding: 10px 20px;
-            font-size: 16px;
-            background-color: #1da1f2;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
+            padding: 20px;
         }
         #feed {
-            background-color: #1e1e1e;
+            max-width: 600px;
+            margin: 60px auto 0;
+            background-color: var(--feed-bg);
             border-radius: 10px;
             overflow: hidden;
+            transition: background-color 0.3s;
         }
         .post {
             padding: 15px;
-            border-bottom: 1px solid #333;
+            border-bottom: 1px solid var(--border-color);
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             min-height: 200px;
@@ -48,36 +48,98 @@
             max-height: 100%;
             object-fit: contain;
             border-radius: 5px;
+            cursor: pointer;
         }
         .post .text-content {
             max-height: 100%;
             overflow-y: auto;
             word-wrap: break-word;
         }
-        .loading-indicator {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            font-size: 24px;
-            color: #fff;
-            background-color: rgba(0, 0, 0, 0.7);
-            padding: 10px 20px;
-            border-radius: 5px;
+        #controls {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background-color: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 1000;
         }
-        #loading {
-            text-align: center;
-            padding: 20px;
-            display: none;
+        button {
+            padding: 5px 10px;
+            font-size: 14px;
+            background-color: #1da1f2;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        #autoscrollSpeed {
+            width: 100px;
+        }
+        #hideUIButton {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1001;
+            font-size: 24px;
+            background: none;
+            border: none;
+            cursor: pointer;
+        }
+        .light-mode {
+            --bg-color: #f0f2f5;
+            --text-color: #333;
+            --feed-bg: #fff;
+            --border-color: #e1e8ed;
+        }
+        #backgroundPreview {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: -1;
+        }
+        .enlarged-media {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+        .enlarged-media img,
+        .enlarged-media video {
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
         }
     </style>
 </head>
 <body>
-    <div id="app">
-        <button id="folderButton">Select Folder</button>
-        <div id="feed"></div>
-        <div id="loading">Loading...</div>
+    <div id="controls">
+        <div>
+            <button id="folderButton">Select Folder</button>
+            <button id="toggleTheme">Toggle Theme</button>
+            <button id="toggleAutoscroll">Start Autoscroll</button>
+            <input type="range" id="autoscrollSpeed" min="1" max="10" value="5">
+            <button id="selectBackground">Select Background</button>
+        </div>
     </div>
+    <button id="hideUIButton">Hide UI</button>
+    <div id="app">
+        <div id="feed"></div>
+    </div>
+    <img id="backgroundPreview" src="" alt="Background" style="display: none;">
 
     <script>
         let dirHandle;
@@ -85,25 +147,108 @@
         const postsPerLoad = 5;
         let isLoading = false;
         let loadingContent = 0;
+        let autoscrollInterval;
 
         const folderButton = document.getElementById('folderButton');
+        const toggleThemeButton = document.getElementById('toggleTheme');
+        const toggleAutoscrollButton = document.getElementById('toggleAutoscroll');
+        const autoscrollSpeedSlider = document.getElementById('autoscrollSpeed');
+        const selectBackgroundButton = document.getElementById('selectBackground');
+        const hideUIButton = document.getElementById('hideUIButton');
+        const controls = document.getElementById('controls');
         const feed = document.getElementById('feed');
-        const loadingIndicator = document.getElementById('loading');
+        const backgroundPreview = document.getElementById('backgroundPreview');
+
+        // Load preferences
+        let preferences = JSON.parse(localStorage.getItem('viewerPreferences')) || {};
+        if (preferences.theme === 'light') document.body.classList.add('light-mode');
+        if (preferences.autoscrollSpeed) autoscrollSpeedSlider.value = preferences.autoscrollSpeed;
+        if (preferences.backgroundImage) {
+            backgroundPreview.src = preferences.backgroundImage;
+            backgroundPreview.style.display = 'block';
+        }
+        if (preferences.isUIHidden) {
+            controls.style.display = 'none';
+            hideUIButton.textContent = '💦';
+        }
 
         folderButton.addEventListener('click', async () => {
             try {
                 dirHandle = await window.showDirectoryPicker();
                 feed.innerHTML = '';
                 fileHandles = [];
-                loadingIndicator.style.display = 'block';
+                loadingContent = 0;
                 await loadFileHandles(dirHandle);
                 shuffleArray(fileHandles);
-                loadingIndicator.style.display = 'none';
                 await loadPosts();
             } catch (err) {
-                console.error('Error accessing folder, pick a new folder or check file permissions:', err);
-                loadingIndicator.style.display = 'none';
+                console.error('Error accessing folder:', err);
             }
+        });
+
+        toggleThemeButton.addEventListener('click', () => {
+            document.body.classList.toggle('light-mode');
+            preferences.theme = document.body.classList.contains('light-mode') ? 'light' : 'dark';
+            savePreferences();
+        });
+
+        toggleAutoscrollButton.addEventListener('click', () => {
+            if (autoscrollInterval) {
+                clearInterval(autoscrollInterval);
+                autoscrollInterval = null;
+                toggleAutoscrollButton.textContent = 'Start Autoscroll';
+            } else {
+                autoscrollInterval = setInterval(() => {
+                    window.scrollBy(0, 1);
+                }, 11 - autoscrollSpeedSlider.value);
+                toggleAutoscrollButton.textContent = 'Stop Autoscroll';
+            }
+        });
+
+        autoscrollSpeedSlider.addEventListener('input', () => {
+            if (autoscrollInterval) {
+                clearInterval(autoscrollInterval);
+                autoscrollInterval = setInterval(() => {
+                    window.scrollBy(0, 1);
+                }, 11 - autoscrollSpeedSlider.value);
+            }
+            preferences.autoscrollSpeed = autoscrollSpeedSlider.value;
+            savePreferences();
+        });
+
+        selectBackgroundButton.addEventListener('click', async () => {
+            const [fileHandle] = await window.showOpenFilePicker({
+                types: [
+                    {
+                        description: 'Images',
+                        accept: {
+                            'image/*': ['.png', '.gif', '.jpeg', '.jpg']
+                        }
+                    },
+                ],
+                multiple: false
+            });
+            const file = await fileHandle.getFile();
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                backgroundPreview.src = e.target.result;
+                backgroundPreview.style.display = 'block';
+                preferences.backgroundImage = e.target.result;
+                savePreferences();
+            };
+            reader.readAsDataURL(file);
+        });
+
+        hideUIButton.addEventListener('click', () => {
+            if (controls.style.display === 'none') {
+                controls.style.display = 'flex';
+                hideUIButton.textContent = 'Hide UI';
+            } else {
+                controls.style.display = 'none';
+                hideUIButton.textContent = '💦';
+            }
+            preferences.isUIHidden = (controls.style.display === 'none');
+            savePreferences();
         });
 
         async function loadFileHandles(handle, path = '') {
@@ -127,103 +272,127 @@
             if (isLoading || loadingContent > 0 || fileHandles.length === 0) return;
             
             isLoading = true;
-            loadingIndicator.style.display = 'block';
 
             for (let i = 0; i < postsPerLoad && fileHandles.length > 0; i++) {
                 const fileHandle = fileHandles.pop();
                 const file = await fileHandle.handle.getFile();
-                const post = await createPostElement(file);
+                const post = await createPostElement(file, fileHandle.path);
                 feed.appendChild(post);
             }
 
             isLoading = false;
-            loadingIndicator.style.display = 'none';
-            handleScroll(); // Check video visibility after loading new posts
+            handleScroll();
         }
 
-        async function createPostElement(file) {
+        async function createPostElement(file, path) {
             const post = document.createElement('div');
             post.className = 'post';
 
-            const loadingIndicator = document.createElement('div');
-            loadingIndicator.className = 'loading-indicator';
-            loadingIndicator.textContent = 'Loading...';
-            post.appendChild(loadingIndicator);
-
-            loadingContent++;
-
             try {
                 if (file.type.startsWith('image/')) {
-                    await loadImage(file, post, loadingIndicator);
+                    await loadImage(file, post);
                 } else if (file.type.startsWith('video/')) {
-                    await loadVideo(file, post, loadingIndicator);
+                    await loadVideo(file, post);
                 } else if (file.type === 'text/plain') {
-                    await loadText(file, post, loadingIndicator);
+                    await loadText(file, post);
                 } else {
                     throw new Error('Unsupported file type');
                 }
             } catch (error) {
                 console.error('Error loading file:', error);
-                loadingIndicator.textContent = 'Error loading content';
+                post.textContent = 'Error loading content';
             }
 
-            loadingContent--;
-            checkAndLoadMore();
             return post;
         }
 
-        function loadImage(file, post, loadingIndicator) {
+        function loadImage(file, post) {
             return new Promise((resolve, reject) => {
                 const img = new Image();
-                img.src = URL.createObjectURL(file);
+                const objectUrl = URL.createObjectURL(file);
+                img.src = objectUrl;
                 img.onload = () => {
-                    URL.revokeObjectURL(img.src);
                     post.appendChild(img);
-                    loadingIndicator.remove();
+                    img.addEventListener('click', () => enlargeMedia(file, 'image'));
                     resolve();
                 };
                 img.onerror = () => {
+                    URL.revokeObjectURL(objectUrl);
                     reject(new Error('Failed to load image'));
                 };
             });
         }
 
-        function loadVideo(file, post, loadingIndicator) {
+        function loadVideo(file, post) {
             return new Promise((resolve, reject) => {
                 const video = document.createElement('video');
-                video.src = URL.createObjectURL(file);
+                const objectUrl = URL.createObjectURL(file);
+                video.src = objectUrl;
                 video.muted = true;
                 video.loop = true;
                 video.controls = true;
                 video.preload = 'metadata';
                 video.onloadedmetadata = () => {
                     post.appendChild(video);
-                    loadingIndicator.remove();
+                    video.addEventListener('click', (e) => {
+                        if (!e.target.controls) {
+                            enlargeMedia(file, 'video');
+                        }
+                    });
                     resolve();
                 };
                 video.onerror = () => {
+                    URL.revokeObjectURL(objectUrl);
                     reject(new Error('Failed to load video'));
                 };
             });
         }
 
-        async function loadText(file, post, loadingIndicator) {
+        async function loadText(file, post) {
             const textContent = document.createElement('div');
             textContent.className = 'text-content';
             try {
                 const text = await file.text();
                 textContent.textContent = text;
                 post.appendChild(textContent);
-                loadingIndicator.remove();
             } catch (error) {
                 throw new Error('Failed to load text content');
             }
         }
 
-        function checkAndLoadMore() {
-            if (loadingContent === 0 && 
-                (window.innerHeight + window.scrollY) >= document.body.offsetHeight - window.innerHeight) {
-                loadPosts();
+        function enlargeMedia(file, type) {
+            const enlargedView = document.createElement('div');
+            enlargedView.className = 'enlarged-media';
+            
+            let media;
+            if (type === 'image') {
+                media = new Image();
+            } else if (type === 'video') {
+                media = document.createElement('video');
+                media.controls = true;
+                media.loop = true;
+            }
+
+            const objectUrl = URL.createObjectURL(file);
+            media.src = objectUrl;
+
+            media.onload = media.onloadedmetadata = () => {
+                URL.revokeObjectURL(objectUrl);
+            };
+
+            enlargedView.appendChild(media);
+            enlargedView.addEventListener('click', (e) => {
+                if (e.target === enlargedView) {
+                    document.body.removeChild(enlargedView);
+                    if (autoscrollInterval) toggleAutoscrollButton.click(); // Resume autoscroll if it was active
+                }
+            });
+
+            document.body.appendChild(enlargedView);
+            if (autoscrollInterval) toggleAutoscrollButton.click(); // Pause autoscroll
+
+            if (type === 'video') {
+                media.play();
             }
         }
 
@@ -239,18 +408,22 @@
                     const videoCenter = rect.top + rect.height / 2;
 
                     if (videoCenter >= 0 && videoCenter <= windowHeight) {
-                        // Video is centered on the screen
                         video.muted = false;
                         if (video.paused) video.play();
                     } else {
-                        // Video is not centered
                         video.muted = true;
                         if (!video.paused) video.pause();
                     }
                 }
             });
 
-            checkAndLoadMore();
+            if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight - window.innerHeight) {
+                loadPosts();
+            }
+        }
+
+        function savePreferences() {
+            localStorage.setItem('viewerPreferences', JSON.stringify(preferences));
         }
 
         window.addEventListener('scroll', handleScroll);
