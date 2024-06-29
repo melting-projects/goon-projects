@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Feed Local Content Viewer</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --text-color: #e0e0e0;
+            --feed-bg: #1e1e1e;
+            --border-color: #333;
+        }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
+            min-height: 100vh;
+        }
+        #app {
+        display: flex;
+        padding: 20px;
+        height: calc(100vh - 40px);
+        overflow: hidden;  /* Changed from overflow-x: auto */
+    }
+    .feed-container {
+        flex: 1;  /* Changed from flex: 0 0 300px */
+        margin-right: 10px;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        min-width: 200px;  /* Added to ensure a minimum width */
+    }
+    .feed-container:last-child {
+        margin-right: 0;  /* Remove right margin from the last feed */
+    }
+
+        .feed-controls {
+            background-color: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .feed {
+        flex-grow: 1;
+        background-color: var(--feed-bg);
+        border-radius: 10px;
+        overflow-y: auto;
+        transition: background-color 0.3s;
+        scrollbar-width: none;  /* Firefox */
+        -ms-overflow-style: none;  /* Internet Explorer 10+ */
+    }
+    .feed::-webkit-scrollbar { 
+        width: 0;
+        height: 0;
+        background: transparent;  /* Chrome/Safari/Webkit */
+    }
+        .post {
+            padding: 15px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 200px;
+            max-height: 80vh;
+            overflow: hidden;
+            position: relative;
+        }
+        .post img, .post video {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .post .text-content {
+            max-height: 100%;
+            overflow-y: auto;
+            word-wrap: break-word;
+        }
+        button {
+            padding: 5px 10px;
+            font-size: 14px;
+            background-color: #1da1f2;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 5px;
+        }
+        .autoscroll-speed {
+            width: 100%;
+            margin-bottom: 5px;
+        }
+        .light-mode {
+            --bg-color: #f0f2f5;
+            --text-color: #333;
+            --feed-bg: #fff;
+            --border-color: #e1e8ed;
+        }
+        #backgroundPreview {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: -1;
+        }
+        .enlarged-media {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+        .enlarged-media img,
+        .enlarged-media video {
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+        }
+        #globalControls {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        z-index: 1002;  /* Increased z-index */
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+    }
+/* hide ui button is completely fucked */
+    #hideUIButton {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        z-index: 1003;  /* Even higher z-index to be above globalControls */
+        font-size: 24px;
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: white;  /* Ensure visibility */
+        background-color: rgba(0, 0, 0, 0.5);  /* Semi-transparent background */
+        border-radius: 5px;
+        padding: 5px 10px;
+    }
+    </style>
+</head>
+<body>
+    <div id="globalControls">
+        <button id="toggleTheme">Toggle Theme</button>
+        <button id="selectBackground">Select Background</button>
+    </div>
+    <button id="hideUIButton">Hide UI</button>
+    <div id="app">
+        <div class="feed-container" id="feed1"></div>
+        <div class="feed-container" id="feed2"></div>
+        <div class="feed-container" id="feed3"></div>
+        <div class="feed-container" id="feed4"></div>
+    </div>
+    <img id="backgroundPreview" src="" alt="Background" style="display: none;">
+
+    <script>
+        const NUM_FEEDS = 4;
+        let feeds = [];
+        let preferences = JSON.parse(localStorage.getItem('viewerPreferences')) || {};
+    
+        class Feed {
+            constructor(containerId) {
+                this.container = document.getElementById(containerId);
+                this.fileHandles = [];
+                this.isLoading = false;
+                this.loadingContent = 0;
+                this.autoscrollInterval = null;
+                this.isMuted = false;
+    
+                this.setupHTML();
+                this.setupEventListeners();
+            }
+    
+            setupHTML() {
+                this.container.innerHTML = `
+                    <div class="feed-controls">
+                        <button class="select-folder">Select Folder</button>
+                        <button class="toggle-autoscroll">Start Autoscroll</button>
+                        <input type="range" class="autoscroll-speed" min="1" max="10" value="5">
+                        <button class="toggle-mute">Mute Feed</button>
+                    </div>
+                    <div class="feed"></div>
+                `;
+                this.folderButton = this.container.querySelector('.select-folder');
+                this.autoscrollButton = this.container.querySelector('.toggle-autoscroll');
+                this.autoscrollSlider = this.container.querySelector('.autoscroll-speed');
+                this.muteButton = this.container.querySelector('.toggle-mute');
+                this.feedElement = this.container.querySelector('.feed');
+            }
+    
+            setupEventListeners() {
+                this.folderButton.addEventListener('click', () => this.selectFolder());
+                this.autoscrollButton.addEventListener('click', () => this.toggleAutoscroll());
+                this.autoscrollSlider.addEventListener('input', () => this.updateAutoscrollSpeed());
+                this.muteButton.addEventListener('click', () => this.toggleMute());
+                this.feedElement.addEventListener('scroll', () => this.handleScroll());
+            }
+    
+            async selectFolder() {
+                try {
+                    const dirHandle = await window.showDirectoryPicker();
+                    this.feedElement.innerHTML = '';
+                    this.fileHandles = [];
+                    this.loadingContent = 0;
+                    await this.loadFileHandles(dirHandle);
+                    this.shuffleArray(this.fileHandles);
+                    await this.loadPosts();
+                } catch (err) {
+                    console.error('Error accessing folder:', err);
+                }
+            }
+    
+            toggleAutoscroll() {
+                if (this.autoscrollInterval) {
+                    clearInterval(this.autoscrollInterval);
+                    this.autoscrollInterval = null;
+                    this.autoscrollButton.textContent = 'Start Autoscroll';
+                } else {
+                    this.autoscrollInterval = setInterval(() => {
+                        this.feedElement.scrollBy(0, 1);
+                    }, 11 - this.autoscrollSlider.value);
+                    this.autoscrollButton.textContent = 'Stop Autoscroll';
+                }
+            }
+    
+            updateAutoscrollSpeed() {
+                if (this.autoscrollInterval) {
+                    clearInterval(this.autoscrollInterval);
+                    this.autoscrollInterval = setInterval(() => {
+                        this.feedElement.scrollBy(0, 1);
+                    }, 11 - this.autoscrollSlider.value);
+                }
+            }
+    
+            toggleMute() {
+                this.isMuted = !this.isMuted;
+                this.muteButton.textContent = this.isMuted ? 'Unmute Feed' : 'Mute Feed';
+                this.feedElement.querySelectorAll('video').forEach(video => {
+                    video.muted = this.isMuted;
+                });
+            }
+    
+            async loadFileHandles(handle, path = '') {
+                for await (const entry of handle.values()) {
+                    if (entry.kind === 'file') {
+                        this.fileHandles.push({ handle: entry, path: path + entry.name });
+                    } else if (entry.kind === 'directory') {
+                        await this.loadFileHandles(entry, path + entry.name + '/');
+                    }
+                }
+            }
+    
+            shuffleArray(array) {
+                for (let i = array.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [array[i], array[j]] = [array[j], array[i]];
+                }
+            }
+
+            async loadPosts() {
+            if (this.isLoading || this.loadingContent > 0 || this.fileHandles.length === 0) return;
+            
+            this.isLoading = true;
+
+            for (let i = 0; i < 5 && this.fileHandles.length > 0; i++) {
+                const fileHandle = this.fileHandles.pop();
+                const file = await fileHandle.handle.getFile();
+                const post = await this.createPostElement(file, fileHandle.path);
+                this.feedElement.appendChild(post);
+            }
+
+            this.isLoading = false;
+            this.handleScroll();
+        }
+
+        async createPostElement(file, path) {
+            const post = document.createElement('div');
+            post.className = 'post';
+
+            try {
+                if (file.type.startsWith('image/')) {
+                    await this.loadImage(file, post);
+                } else if (file.type.startsWith('video/')) {
+                    await this.loadVideo(file, post);
+                } else if (file.type === 'text/plain') {
+                    await this.loadText(file, post);
+                } else {
+                    throw new Error('Unsupported file type');
+                }
+            } catch (error) {
+                console.error('Error loading file:', error);
+                post.textContent = 'Error loading content';
+            }
+
+            return post;
+        }
+
+        loadImage(file, post) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                const objectUrl = URL.createObjectURL(file);
+                img.src = objectUrl;
+                img.onload = () => {
+                    post.appendChild(img);
+                    img.addEventListener('click', () => enlargeMedia(file, 'image'));
+                    resolve();
+                };
+                img.onerror = () => {
+                    URL.revokeObjectURL(objectUrl);
+                    reject(new Error('Failed to load image'));
+                };
+            });
+        }
+
+        loadVideo(file, post) {
+            return new Promise((resolve, reject) => {
+                const video = document.createElement('video');
+                const objectUrl = URL.createObjectURL(file);
+                video.src = objectUrl;
+                video.muted = this.isMuted;
+                video.loop = true;
+                video.controls = true;
+                video.preload = 'metadata';
+                video.onloadedmetadata = () => {
+                    post.appendChild(video);
+                    video.addEventListener('click', (e) => {
+                        if (!e.target.controls) {
+                            enlargeMedia(file, 'video');
+                        }
+                    });
+                    resolve();
+                };
+                video.onerror = () => {
+                    URL.revokeObjectURL(objectUrl);
+                    reject(new Error('Failed to load video'));
+                };
+            });
+        }
+
+        async loadText(file, post) {
+            const textContent = document.createElement('div');
+            textContent.className = 'text-content';
+            try {
+                const text = await file.text();
+                textContent.textContent = text;
+                post.appendChild(textContent);
+            } catch (error) {
+                throw new Error('Failed to load text content');
+            }
+        }
+
+        handleScroll() {
+            if (this.loadingContent > 0) return;
+
+            const posts = this.feedElement.querySelectorAll('.post');
+            posts.forEach(post => {
+                const video = post.querySelector('video');
+                if (video) {
+                    const rect = post.getBoundingClientRect();
+                    const windowHeight = window.innerHeight || document.documentElement.clientHeight;
+                    const videoCenter = rect.top + rect.height / 2;
+
+                    if (videoCenter >= 0 && videoCenter <= windowHeight) {
+                        video.muted = this.isMuted;
+                        if (video.paused) video.play();
+                    } else {
+                        video.muted = true;
+                        if (!video.paused) video.pause();
+                    }
+                }
+            });
+
+            if ((this.feedElement.scrollHeight - this.feedElement.scrollTop) <= this.feedElement.clientHeight + 100) {
+                this.loadPosts();
+            }
+        }
+            
+        }
+        function enlargeMedia(file, type) {
+        const enlargedView = document.createElement('div');
+        enlargedView.className = 'enlarged-media';
+        
+        let media;
+        if (type === 'image') {
+            media = new Image();
+        } else if (type === 'video') {
+            media = document.createElement('video');
+            media.controls = true;
+            media.loop = true;
+        }
+
+        const objectUrl = URL.createObjectURL(file);
+        media.src = objectUrl;
+
+        media.onload = media.onloadedmetadata = () => {
+            URL.revokeObjectURL(objectUrl);
+        };
+
+        enlargedView.appendChild(media);
+        enlargedView.addEventListener('click', (e) => {
+            if (e.target === enlargedView) {
+                document.body.removeChild(enlargedView);
+            }
+        });
+
+        document.body.appendChild(enlargedView);
+
+        if (type === 'video') {
+            media.play();
+        }
+    }
+
+    function initializeFeeds() {
+        for (let i = 1; i <= NUM_FEEDS; i++) {
+            feeds.push(new Feed(`feed${i}`));
+        }
+    }
+
+    function setupGlobalControls() {
+        const toggleThemeButton = document.getElementById('toggleTheme');
+        const selectBackgroundButton = document.getElementById('selectBackground');
+        const backgroundPreview = document.getElementById('backgroundPreview');
+
+        toggleThemeButton.addEventListener('click', () => {
+            document.body.classList.toggle('light-mode');
+            preferences.theme = document.body.classList.contains('light-mode') ? 'light' : 'dark';
+            savePreferences();
+        });
+
+        selectBackgroundButton.addEventListener('click', async () => {
+            const [fileHandle] = await window.showOpenFilePicker({
+                types: [
+                    {
+                        description: 'Images',
+                        accept: {
+                            'image/*': ['.png', '.gif', '.jpeg', '.jpg']
+                        }
+                    },
+                ],
+                multiple: false
+            });
+            const file = await fileHandle.getFile();
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                backgroundPreview.src = e.target.result;
+                backgroundPreview.style.display = 'block';
+                preferences.backgroundImage = e.target.result;
+                savePreferences();
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function savePreferences() {
+        localStorage.setItem('viewerPreferences', JSON.stringify(preferences));
+    }
+
+    function loadPreferences() {
+        if (preferences.theme === 'light') document.body.classList.add('light-mode');
+        if (preferences.backgroundImage) {
+            backgroundPreview.src = preferences.backgroundImage;
+            backgroundPreview.style.display = 'block';
+        }
+    }
+
+    // Initialize the application
+    document.addEventListener('DOMContentLoaded', () => {
+        loadPreferences();
+        initializeFeeds();
+        setupGlobalControls();
+    });
+    </script>
+</body>
+</html>
