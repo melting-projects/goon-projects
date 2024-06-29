@@ -10,6 +10,9 @@ Below is a list of the projects:
 A single-file HTML project that sort of acts like twitter's infinite scroll, but for local content. I guess the idea is that if you have a folder of mixed-media (images, video, etc) it'll view and load them infinitely as you scroll. Its made to unload items once they're scrolled past to be less memory heavy. I tested it with a folder of 5k+ videos/images and it handled it well enough. 
 Videos are muted by default but will automatically unmute once they're in view.
 
+## Infini-Deck
+Mostly the same as above but supports 4 separate folders at once. Fills the browser window. Individual audio mute and scroll speed controls. Needs a bit of work but is mostly functional.
+
 ## FixUp-X-Links
 A userscript that modifies the copied url when clicking Copy Link on twitter's share menu. It literally just replaces the "x.com/twitter.com" part with "fixupx.com" while keeping the status/id the same. I did this so I could share stuff from X to telegram/discord with better embeds. 
 I tried going through the DOM to modify the links directly pre-copy, but it kept breaking every day or so. Currently it works by letting twitter copy the link how it wants, then just replaces the clipboard content with the fixed link. Kinda hacky and means you need to give the script permission to modify your clipboard, but it works.
